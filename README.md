@@ -1,25 +1,38 @@
+<div align="center">
+
 # YouTube Studio & Channel Analytics MCP Server
 
-A Model Context Protocol (MCP) server that empowers AI assistants to analyze your YouTube channel, monitor video metrics, deep-dive into YouTube Studio analytics, discover audience traffic sources, and analyze community engagement — **configured entirely through `.env`**.
+**A Production-Grade Model Context Protocol (MCP) Server for YouTube Studio & Channel Intelligence**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg?logo=python)](https://www.python.org/)
+[![Managed by: uv](https://img.shields.io/badge/managed%20by-uv-DE5FE9.svg?logo=astral)](https://github.com/astral-sh/uv)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Official%20SDK-black.svg)](https://modelcontextprotocol.io/)
+
+*Empower AI assistants (Claude, Cursor, Antigravity, etc.) to analyze your YouTube channel, track video metrics, deep-dive into YouTube Studio analytics, discover audience traffic sources, and analyze community sentiment — configured entirely through `.env`.*
+
+</div>
 
 ---
 
-## 🚀 Features & MCP Tools
+## 🚀 Features & MCP Tool Suite
 
-| Tool | Description |
-| :--- | :--- |
-| **`get_channel_overview`** | Fetches channel title, handle, subscriber count, total lifetime views, video count, topic categories, and channel description. |
-| **`get_channel_analytics`** | Fetches core Studio metrics (`views`, `watch time hours`, `average view duration`, `subscribers gained/lost`, `likes`, `shares`, `comments`, `impressions`, `CTR`) over any timeframe (`7d`, `28d`, `90d`, `365d`, `last_month`, or custom dates). |
-| **`get_analytics_by_dimension`** | Detailed breakdowns by dimension: `trafficSource` (YouTube search, suggested videos, browse features), `deviceType`, `country` (geographics), `ageGroup`, `gender`, `operatingSystem`, or `day`. |
-| **`get_top_performing_videos`** | Ranks your top videos by views, watch time minutes, or subscribers gained in any date range. |
-| **`get_video_analytics`** | Deep-dive analytics on a single specific video (daily trajectory, traffic sources, audience retention). |
-| **`list_channel_videos`** | Lists recent uploaded videos with views, likes, comments, duration, and privacy status. |
-| **`get_video_details`** | Returns full metadata, tags, description, category, and statistics for specified video IDs. |
-| **`get_video_comments`** | Retrieves top comment threads and replies across your channel or on a specific video for sentiment analysis and feedback. |
+YouTube Studio MCP provides **8 specialized tools**:
+
+| Tool | Category | Description |
+| :--- | :--- | :--- |
+| **`get_channel_overview`** | Channel Stats | Returns channel title, handle, subscriber count, total lifetime views, video count, topic categories, and description. |
+| **`get_channel_analytics`** | Studio Analytics | Queries core Studio metrics (`views`, `watch time hours`, `average view duration`, `subscribers gained/lost`, `likes`, `shares`, `comments`, `impressions`, `CTR`) over any timeframe (`7d`, `28d`, `90d`, `365d`, `last_month`, or custom dates). |
+| **`get_analytics_by_dimension`** | Demographics & Traffic | Detailed breakdowns by dimension: `trafficSource` (YouTube search, suggested, browse), `deviceType`, `country`, `ageGroup`, `gender`, `operatingSystem`, or `day`. |
+| **`get_top_performing_videos`** | Video Intelligence | Ranks your top videos by views, watch time minutes, or subscribers gained in any date range. |
+| **`get_video_analytics`** | Video Deep-Dive | Deep-dive analytics on a single specific video (daily trajectory, watch time, audience retention, traffic sources). |
+| **`list_channel_videos`** | Content Inventory | Lists uploaded videos with current views, likes, comments, duration, and privacy status. |
+| **`get_video_details`** | Video Metadata | Returns full metadata, tags, description, category, and statistics for specified video IDs. |
+| **`get_video_comments`** | Community & Sentiment | Retrieves top comment threads and replies across your channel or on a specific video for sentiment analysis and feedback. |
 
 ---
 
-## ⚙️ Configuration via `.env`
+## ⚙️ Environment Configuration (`.env`)
 
 All credentials and settings are read directly from `.env`:
 
@@ -34,32 +47,35 @@ YOUTUBE_REFRESH_TOKEN=
 
 ---
 
-## 🛠️ Step-by-Step Setup
+## 🛠️ Step-by-Step Setup Guide
 
-### Step 1: Install Dependencies with `uv`
+### 1. Clone & Install Dependencies with `uv`
 
-```powershell
+```bash
+git clone https://github.com/Dhananjayrbiraris/youtube-mcp.git
+cd youtube-mcp
+
 uv venv
 uv pip install -e .
 ```
 
 ---
 
-### Step 2: Get Google Cloud Client ID & Secret
+### 2. Set Up Google Cloud Project (One-Time)
 
 1. Open [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a project (e.g. `YouTube-MCP-Studio`).
+2. Create a new project (e.g. `YouTube-Studio-MCP`).
 3. In **APIs & Services > Library**, enable:
    - **YouTube Data API v3**
    - **YouTube Analytics API**
 4. In **OAuth consent screen**:
-   - Choose **External** -> fill app name & email.
+   - User Type: **External** -> fill app name & your email.
    - Under **Test users**, add your Google email address.
 5. In **Credentials**:
-   - Click **Create Credentials** -> **OAuth client ID**.
+   - Click **Create Credentials > OAuth client ID**.
    - Application Type: **Desktop App**.
    - Copy the **Client ID** and **Client Secret**.
-6. Paste them directly into your `.env` file:
+6. Paste them into `.env`:
    ```ini
    YOUTUBE_CLIENT_ID=123456789-xxxx.apps.googleusercontent.com
    YOUTUBE_CLIENT_SECRET=GOCSPX-xxxx
@@ -67,21 +83,21 @@ uv pip install -e .
 
 ---
 
-### Step 3: Run 1-Click Authenticator
+### 3. Run 1-Click Authenticator
 
-Run:
-
-```powershell
+```bash
 uv run run_auth.py
 ```
 
-This launches your browser for a 1-click Google login. It automatically writes the **`YOUTUBE_REFRESH_TOKEN`** directly into your **`.env`** file.
+This launches your browser for a 1-click Google OAuth login. It automatically writes the **`YOUTUBE_REFRESH_TOKEN`** directly into your **`.env`** file.
 
 ---
 
-### Step 4: Add to Antigravity / Claude Desktop MCP Configuration
+### 4. Connect to your AI Client
 
-Add this entry to your MCP configuration:
+#### Claude Desktop
+
+Add to your `claude_desktop_config.json`:
 
 ```json
 {
@@ -90,7 +106,7 @@ Add this entry to your MCP configuration:
       "command": "uv",
       "args": [
         "--directory",
-        "c:/Users/dhananjay.biraris/Desktop/Dhananjay_PC_Backup/Desktop/Youtube MCP",
+        "/absolute/path/to/youtube-mcp",
         "run",
         "youtube-studio-mcp"
       ]
@@ -101,10 +117,26 @@ Add this entry to your MCP configuration:
 
 ---
 
-## 💡 Example Queries with AI
+## 💡 Example AI Prompts
 
-- *"Give me a complete summary of my channel stats for the last 28 days."*
-- *"Where is most of my traffic coming from (search, suggested, browse)?"*
-- *"Which videos gave me the most subscribers this month?"*
-- *"Summarize the feedback and common questions in the comments of my latest video."*
-- *"What is the demographic breakdown of my viewers by age and country?"*
+- *"Give me an overview of my YouTube channel's performance over the last 28 days."*
+- *"Where is most of my traffic coming from (search, suggested videos, or browse features)?"*
+- *"Which of my videos generated the most subscribers this month?"*
+- *"Summarize common themes and questions from the comments on my latest video."*
+- *"Show me my audience breakdown by age group and country."*
+
+---
+
+## 🧪 Testing
+
+Run the test suite:
+
+```bash
+pytest
+```
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
