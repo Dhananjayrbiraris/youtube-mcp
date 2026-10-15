@@ -6,8 +6,11 @@ video performance, audience demographics, and studio analytics.
 
 from __future__ import annotations
 
+import functools
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Optional
+
+from src.logging_utils import build_error_response, configure_logging
 
 try:
     # Modern MCP Python SDK v2.x
@@ -34,7 +37,23 @@ except ImportError:
 
 from src.youtube_client import YouTubeStudioClient
 
+logger = configure_logging()
+
 _client: Optional[YouTubeStudioClient] = None
+
+
+def safe_tool(func):
+    """Wrap MCP tools to log failures and return structured JSON errors."""
+
+    @functools.wraps(func)
+    def wrapped(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:  # pragma: no cover - defensive boundary
+            logger.exception("MCP tool failed: %s", func.__name__)
+            return build_error_response(exc)
+
+    return wrapped
 
 
 def get_client() -> YouTubeStudioClient:
@@ -46,6 +65,7 @@ def get_client() -> YouTubeStudioClient:
 
 
 @mcp.tool()
+@safe_tool
 def get_channel_overview() -> str:
     """Fetches high-level metadata and lifetime statistics for your YouTube channel.
 
@@ -58,24 +78,25 @@ def get_channel_overview() -> str:
 
 
 @mcp.tool()
+@safe_tool
 def get_channel_analytics(
     time_period: Optional[str] = "28d",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     dimensions: Optional[str] = "day",
 ) -> str:
-    """Queries core YouTube Studio channel analytics for a specified timeframe.
+    """Query core YouTube Studio analytics for a time range.
 
     Args:
-        time_period: Preset time period ('7d', '28d', '90d', '365d', 'last_month'). Defaults to '28d'.
-        start_date: Explicit start date in YYYY-MM-DD format (overrides time_period if both start & end are provided).
+        time_period: Preset time period ('7d', '28d', '90d', '365d',
+            'last_month'). Defaults to '28d'.
+        start_date: Explicit start date in YYYY-MM-DD format.
         end_date: Explicit end date in YYYY-MM-DD format.
-        dimensions: Dimension to group by, e.g. 'day' (default) or None for a single aggregate row.
+        dimensions: Dimension to group by; e.g. 'day' or None for a single
+            aggregate row.
 
     Returns:
-        Summary metrics (total views, watch time hours, avg view duration,
-        subscribers gained/lost, net growth, likes, shares, comments, impressions, CTR)
-        and daily time-series data points.
+        Summary metrics and daily time-series data points.
     """
     client = get_client()
     data = client.get_channel_analytics(
@@ -88,6 +109,7 @@ def get_channel_analytics(
 
 
 @mcp.tool()
+@safe_tool
 def get_analytics_by_dimension(
     dimension: str,
     time_period: Optional[str] = "28d",
@@ -95,18 +117,14 @@ def get_analytics_by_dimension(
     end_date: Optional[str] = None,
     max_results: int = 20,
 ) -> str:
-    """Fetches channel analytics broken down by a specific dimension.
+    """Fetch channel analytics for a specific dimension.
 
     Args:
-        dimension: The dimension to analyze. Supported values:
-                   - 'trafficSource' (YouTube search, suggested videos, browse features, external, etc.)
-                   - 'deviceType' (mobile phone, computer, TV, tablet)
-                   - 'country' (top geographic viewer locations)
-                   - 'ageGroup' (demographics: 18-24, 25-34, 35-44, etc.)
-                   - 'gender' (viewer gender percentage)
-                   - 'operatingSystem' (Android, Windows, iOS, etc.)
-                   - 'day' or 'month'
-        time_period: Preset time period ('7d', '28d', '90d', '365d', 'last_month'). Defaults to '28d'.
+        dimension: The dimension to analyze. Supported values include
+            trafficSource, deviceType, country, ageGroup, gender,
+            operatingSystem, day, or month.
+        time_period: Preset time period ('7d', '28d', '90d', '365d',
+            'last_month'). Defaults to '28d'.
         start_date: Optional explicit start date (YYYY-MM-DD).
         end_date: Optional explicit end date (YYYY-MM-DD).
         max_results: Maximum number of rows to return (default: 20).
@@ -126,6 +144,7 @@ def get_analytics_by_dimension(
 
 
 @mcp.tool()
+@safe_tool
 def get_top_performing_videos(
     time_period: Optional[str] = "28d",
     start_date: Optional[str] = None,
@@ -136,10 +155,12 @@ def get_top_performing_videos(
     """Identifies and ranks your top-performing videos within a time period.
 
     Args:
-        time_period: Preset time period ('7d', '28d', '90d', '365d', 'last_month'). Defaults to '28d'.
+        time_period: Preset time period ('7d', '28d', '90d', '365d',
+            'last_month'). Defaults to '28d'.
         start_date: Optional explicit start date (YYYY-MM-DD).
         end_date: Optional explicit end date (YYYY-MM-DD).
-        order_by: Metric to rank by: 'views', 'estimatedMinutesWatched', 'subscribersGained', or 'likes'.
+        order_by: Metric to rank by: 'views', 'estimatedMinutesWatched',
+            'subscribersGained', or 'likes'.
         max_results: Number of top videos to return (default: 10).
 
     Returns:
@@ -158,23 +179,25 @@ def get_top_performing_videos(
 
 
 @mcp.tool()
+@safe_tool
 def get_video_analytics(
     video_id: str,
     time_period: Optional[str] = "28d",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> str:
-    """Performs deep-dive analytics on a single specific video.
+    """Perform deep-dive analytics on a single YouTube video.
 
     Args:
         video_id: The 11-character YouTube video ID (e.g. 'dQw4w9WgXcQ').
-        time_period: Preset time period ('7d', '28d', '90d', '365d', 'last_month'). Defaults to '28d'.
+        time_period: Preset time period ('7d', '28d', '90d', '365d',
+            'last_month'). Defaults to '28d'.
         start_date: Optional explicit start date (YYYY-MM-DD).
         end_date: Optional explicit end date (YYYY-MM-DD).
 
     Returns:
-        Video metadata, daily trajectory, total period views & watch time,
-        and traffic source breakdown for this specific video.
+        Video metadata, daily trajectory, total period views and watch time,
+        and traffic source breakdown.
     """
     client = get_client()
     data = client.get_video_analytics(
@@ -187,6 +210,7 @@ def get_video_analytics(
 
 
 @mcp.tool()
+@safe_tool
 def list_channel_videos(
     max_results: int = 25,
     page_token: Optional[str] = None,
@@ -210,15 +234,16 @@ def list_channel_videos(
 
 
 @mcp.tool()
+@safe_tool
 def get_video_details(video_ids: str) -> str:
-    """Fetches full metadata, description, tags, and statistics for specified video IDs.
+    """Fetch metadata and statistics for specified YouTube video IDs.
 
     Args:
         video_ids: Comma-separated list of YouTube video IDs (e.g. 'vid1,vid2').
 
     Returns:
-        Complete video details including title, description, tags, topic categories,
-        view/like/comment counts, duration, and content settings.
+        Complete video details including title, description, tags, topic
+        categories, view/like/comment counts, duration, and content settings.
     """
     client = get_client()
     data = client.get_video_details(video_ids=video_ids)
@@ -226,6 +251,7 @@ def get_video_details(video_ids: str) -> str:
 
 
 @mcp.tool()
+@safe_tool
 def get_video_comments(
     video_id: Optional[str] = None,
     max_results: int = 20,
@@ -234,9 +260,11 @@ def get_video_comments(
     """Fetches comment threads and audience discussions for a video or the whole channel.
 
     Args:
-        video_id: Optional specific YouTube video ID. If omitted, retrieves recent comments across the channel.
+        video_id: Optional specific YouTube video ID. If omitted,
+            retrieves recent comments across the channel.
         max_results: Number of comment threads to fetch (max 100).
-        order: Sort order: 'relevance' (top comments) or 'time' (newest first).
+        order: Sort order: 'relevance' (top comments) or 'time'
+            (newest first).
 
     Returns:
         List of comments with author, comment text, likes, timestamp, and sample replies.
@@ -252,6 +280,7 @@ def get_video_comments(
 
 def main() -> None:
     """Entrypoint to run the MCP server via stdio transport."""
+    logger.info("Starting youtube-studio-mcp server")
     mcp.run()
 
 

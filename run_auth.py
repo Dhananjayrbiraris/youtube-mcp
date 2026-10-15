@@ -10,14 +10,8 @@ Usage:
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
-# Add project root to sys.path
-PROJECT_ROOT = Path(__file__).resolve().parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.auth import authenticate_interactive, get_client_id, get_client_secret, ENV_FILE
+from src.auth import ENV_FILE, authenticate_interactive, get_client_id, get_client_secret
 
 
 def main() -> None:
@@ -49,14 +43,14 @@ def main() -> None:
     print("[*] Please log into your YouTube account and approve access.\n")
 
     try:
-        creds = authenticate_interactive()
+        authenticate_interactive()
         print("\n" + "=" * 65)
         print("[+] SUCCESS! Authentication complete.")
         print(f"[+] Refresh token has been automatically saved into:\n  {ENV_FILE}")
         print("=" * 65)
         print("\nYour YouTube MCP Server is now fully authenticated and ready to run!")
-    except Exception as e:
-        print(f"\n[!] Authentication failed: {e}")
+    except Exception as exc:
+        print(f"\n[!] Authentication failed: {exc}")
         sys.exit(1)
 
 

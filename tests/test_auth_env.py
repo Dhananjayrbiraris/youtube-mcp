@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from src.auth import get_client_id, get_client_secret, get_refresh_token, save_refresh_token_to_env
+
+from src.auth import save_refresh_token_to_env
 
 
 def test_save_and_read_refresh_token_env(tmp_path: Path):

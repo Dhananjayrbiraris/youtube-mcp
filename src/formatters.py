@@ -10,7 +10,10 @@ def format_analytics_report(response: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     YouTube Analytics API returns:
     {
-      "columnHeaders": [{"name": "day", "columnType": "DIMENSION"}, {"name": "views", "columnType": "METRIC"}],
+      "columnHeaders": [
+        {"name": "day", "columnType": "DIMENSION"},
+        {"name": "views", "columnType": "METRIC"},
+      ],
       "rows": [["2026-08-01", 1234], ["2026-08-02", 5678]]
     }
     This turns it into:
@@ -69,8 +72,21 @@ def summarize_analytics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         lost = totals.get("total_subscribersLost", 0)
         totals["net_subscribers"] = gained - lost
 
-    # Average CTR if impressions and views exist
-    if totals.get("total_impressions", 0) > 0 and totals.get("total_views", 0) > 0:
+    # Prefer the explicit click-through-rate metric when the API provides it.
+    weighted_ctr_total = 0.0
+    impressions_total = 0.0
+    has_ctr_values = False
+    for record in records:
+        impressions = float(record.get("impressions", 0) or 0)
+        ctr_value = record.get("impressionClickThroughRate")
+        if ctr_value is not None:
+            weighted_ctr_total += float(ctr_value) * impressions
+            impressions_total += impressions
+            has_ctr_values = True
+
+    if has_ctr_values and impressions_total > 0:
+        totals["overall_ctr_percentage"] = round((weighted_ctr_total / impressions_total), 2)
+    elif totals.get("total_impressions", 0) > 0 and totals.get("total_views", 0) > 0:
         totals["overall_ctr_percentage"] = round(
             (totals["total_views"] / totals["total_impressions"]) * 100.0, 2
         )

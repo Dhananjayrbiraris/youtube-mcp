@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+import time
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from googleapiclient.discovery import Resource, build
+from googleapiclient.errors import HttpError
 
 from src.auth import load_credentials
 from src.formatters import (
@@ -13,20 +15,125 @@ from src.formatters import (
     parse_iso8601_duration,
     summarize_analytics,
 )
+from src.logging_utils import configure_logging
+
+logger = configure_logging()
 
 
 class YouTubeStudioClient:
-    """High-level client for fetching YouTube Studio and Channel analytics and metadata."""
+    """High-level client for YouTube Studio and Channel analytics."""
+
+    SUPPORTED_TIME_PERIODS = {"7d", "28d", "90d", "365d", "1y", "last_month"}
+    SUPPORTED_DIMENSIONS = {
+        "traffic_source": "insightTrafficSourceType",
+        "trafficsource": "insightTrafficSourceType",
+        "insighttrafficsourcetype": "insightTrafficSourceType",
+        "device_type": "deviceType",
+        "devicetype": "deviceType",
+        "country": "country",
+        "geo": "country",
+        "age_group": "ageGroup",
+        "agegroup": "ageGroup",
+        "gender": "gender",
+        "operating_system": "operatingSystem",
+        "operatingsystem": "operatingSystem",
+        "day": "day",
+        "month": "month",
+    }
+    SUPPORTED_ORDER_BY = {
+        "views": "views",
+        "estimatedminuteswatched": "estimatedMinutesWatched",
+        "estimated_minutes_watched": "estimatedMinutesWatched",
+        "subscribersgained": "subscribersGained",
+        "subscribers_gained": "subscribersGained",
+        "likes": "likes",
+    }
+    SUPPORTED_COMMENT_ORDERS = {"relevance", "time"}
 
     def __init__(self) -> None:
         self._credentials = load_credentials()
-        self.data_api: Resource = build("youtube", "v3", credentials=self._credentials)
-        self.analytics_api: Resource = build("youtubeAnalytics", "v2", credentials=self._credentials)
+        self.data_api: Resource = build(
+            "youtube",
+            "v3",
+            credentials=self._credentials,
+        )
+        self.analytics_api: Resource = build(
+            "youtubeAnalytics",
+            "v2",
+            credentials=self._credentials,
+        )
         self._channel_id: Optional[str] = None
         self._uploads_playlist_id: Optional[str] = None
 
+    @staticmethod
+    def _validate_time_period(time_period: Optional[str]) -> str:
+        """Raises a clear error for unsupported date shortcuts."""
+        normalized = (time_period or "28d").lower().strip()
+        if normalized not in YouTubeStudioClient.SUPPORTED_TIME_PERIODS:
+            supported = ", ".join(sorted(YouTubeStudioClient.SUPPORTED_TIME_PERIODS))
+            raise ValueError(
+                f"Unsupported time period '{time_period}'. Supported values: {supported}."
+            )
+        return normalized
+
+    @staticmethod
+    def _validate_max_results(value: int, *, field_name: str, maximum: int = 100) -> int:
+        """Ensures max_results inputs are within a sane range."""
+        if not isinstance(value, int) or value < 1:
+            raise ValueError(f"{field_name} must be an integer greater than 0.")
+        if value > maximum:
+            raise ValueError(f"{field_name} must be <= {maximum}.")
+        return value
+
+    @staticmethod
+    def _normalize_dimension(dimension: str) -> str:
+        """Maps public aliases to the Google Analytics API dimension names."""
+        if not dimension or not str(dimension).strip():
+            raise ValueError("Dimension is required.")
+
+        normalized = str(dimension).strip().lower()
+        if normalized not in YouTubeStudioClient.SUPPORTED_DIMENSIONS:
+            allowed = ", ".join(sorted(YouTubeStudioClient.SUPPORTED_DIMENSIONS))
+            raise ValueError(
+                f"Unsupported dimension '{dimension}'. "
+                f"Allowed values: {allowed}."
+            )
+        return YouTubeStudioClient.SUPPORTED_DIMENSIONS[normalized]
+
+    @staticmethod
+    def _normalize_order(order: str, *, allowed: Dict[str, str], field_name: str) -> str:
+        """Normalizes a user-provided sort order and validates it."""
+        if not order or not str(order).strip():
+            raise ValueError(f"{field_name} is required.")
+        normalized = str(order).strip().lower()
+        if normalized not in allowed:
+            allowed_values = ", ".join(sorted(allowed))
+            raise ValueError(
+                f"Unsupported {field_name} '{order}'. "
+                f"Allowed values: {allowed_values}."
+            )
+        return allowed[normalized]
+
+    def _execute_with_retry(self, request: Any, *, retries: int = 3) -> Any:
+        """Retries transient Google API failures before surfacing the error."""
+        for attempt in range(retries + 1):
+            try:
+                logger.debug("Executing YouTube API request (attempt=%s)", attempt + 1)
+                return request.execute()
+            except HttpError as exc:
+                status = getattr(exc.resp, "status", None)
+                if status not in {429, 500, 502, 503, 504} or attempt >= retries:
+                    logger.exception("YouTube API request failed with status=%s", status)
+                    raise
+                logger.warning(
+                    "Transient YouTube API failure detected (status=%s); retrying in %ss",
+                    status,
+                    2 ** attempt,
+                )
+                time.sleep(2 ** attempt)
+
     def _get_channel_info_cached(self) -> Tuple[str, str]:
-        """Retrieves and caches the authenticated user's channel ID and uploads playlist ID."""
+        """Return cached channel and uploads metadata for the authenticated account."""
         if self._channel_id and self._uploads_playlist_id:
             return self._channel_id, self._uploads_playlist_id
 
@@ -61,7 +168,7 @@ class YouTubeStudioClient:
             return start_date, end_date
 
         end_str = end_date or yesterday.isoformat()
-        period = (time_period or "28d").lower().strip()
+        period = YouTubeStudioClient._validate_time_period(time_period)
 
         if period == "7d":
             start_dt = yesterday - timedelta(days=7)
@@ -77,9 +184,6 @@ class YouTubeStudioClient:
             last_month_end = first_this_month - timedelta(days=1)
             start_dt = last_month_end.replace(day=1)
             end_str = last_month_end.isoformat()
-        else:
-            # Default to 28 days
-            start_dt = yesterday - timedelta(days=28)
 
         start_str = start_date or start_dt.isoformat()
         return start_str, end_str
@@ -138,6 +242,11 @@ class YouTubeStudioClient:
         )
         query_metrics = metrics or default_metrics
 
+        if dimensions is not None:
+            normalized_dimension = str(dimensions).strip().lower()
+            if normalized_dimension not in {"day", "month"}:
+                raise ValueError("Unsupported dimensions value. Allowed values: day, month.")
+
         kwargs: Dict[str, Any] = {
             "ids": "channel==MINE",
             "startDate": start_str,
@@ -145,11 +254,11 @@ class YouTubeStudioClient:
             "metrics": query_metrics,
         }
         if dimensions:
-            kwargs["dimensions"] = dimensions
-            if dimensions == "day":
+            kwargs["dimensions"] = normalized_dimension
+            if normalized_dimension == "day":
                 kwargs["sort"] = "day"
 
-        response = self.analytics_api.reports().query(**kwargs).execute()
+        response = self._execute_with_retry(self.analytics_api.reports().query(**kwargs))
         records = format_analytics_report(response)
         summary = summarize_analytics(records)
 
@@ -183,25 +292,8 @@ class YouTubeStudioClient:
         - month (month)
         """
         start_str, end_str = self._parse_date_range(start_date, end_date, time_period)
-
-        dimension_map = {
-            "trafficsource": "insightTrafficSourceType",
-            "traffic_source": "insightTrafficSourceType",
-            "insighttrafficsourcetype": "insightTrafficSourceType",
-            "devicetype": "deviceType",
-            "device_type": "deviceType",
-            "country": "country",
-            "geo": "country",
-            "agegroup": "ageGroup",
-            "age_group": "ageGroup",
-            "gender": "gender",
-            "operatingsystem": "operatingSystem",
-            "operating_system": "operatingSystem",
-            "day": "day",
-            "month": "month",
-        }
-
-        api_dimension = dimension_map.get(dimension.lower().strip(), dimension)
+        self._validate_max_results(max_results, field_name="max_results", maximum=50)
+        api_dimension = self._normalize_dimension(dimension)
 
         # Dimension-specific metrics configuration
         if api_dimension in ("ageGroup", "gender"):
@@ -227,7 +319,7 @@ class YouTubeStudioClient:
         elif api_dimension == "gender":
             kwargs["dimensions"] = "gender"
 
-        response = self.analytics_api.reports().query(**kwargs).execute()
+        response = self._execute_with_retry(self.analytics_api.reports().query(**kwargs))
         records = format_analytics_report(response)
 
         return {
@@ -248,10 +340,16 @@ class YouTubeStudioClient:
     ) -> Dict[str, Any]:
         """Identifies top-performing videos within the specified period."""
         start_str, end_str = self._parse_date_range(start_date, end_date, time_period)
+        self._validate_max_results(max_results, field_name="max_results", maximum=50)
+        order_by = self._normalize_order(
+            order_by,
+            allowed=self.SUPPORTED_ORDER_BY,
+            field_name="order_by",
+        )
 
-        sort_metric = f"-{order_by.lstrip('-')}"
+        sort_metric = f"-{order_by}"
 
-        response = (
+        response = self._execute_with_retry(
             self.analytics_api.reports()
             .query(
                 ids="channel==MINE",
@@ -262,7 +360,6 @@ class YouTubeStudioClient:
                 sort=sort_metric,
                 maxResults=max_results,
             )
-            .execute()
         )
 
         records = format_analytics_report(response)
@@ -327,11 +424,13 @@ class YouTubeStudioClient:
         end_date: Optional[str] = None,
         time_period: Optional[str] = "28d",
     ) -> Dict[str, Any]:
-        """Provides in-depth analytics for a single video including daily trends and traffic sources."""
+        """Provide in-depth analytics for a single video and its traffic."""
         start_str, end_str = self._parse_date_range(start_date, end_date, time_period)
+        if not video_id or not str(video_id).strip():
+            raise ValueError("video_id is required.")
 
         # 1. Video daily performance
-        daily_res = (
+        daily_res = self._execute_with_retry(
             self.analytics_api.reports()
             .query(
                 ids="channel==MINE",
@@ -342,13 +441,12 @@ class YouTubeStudioClient:
                 dimensions="day",
                 sort="day",
             )
-            .execute()
         )
         daily_records = format_analytics_report(daily_res)
         summary = summarize_analytics(daily_records)
 
         # 2. Video traffic sources
-        traffic_res = (
+        traffic_res = self._execute_with_retry(
             self.analytics_api.reports()
             .query(
                 ids="channel==MINE",
@@ -359,7 +457,6 @@ class YouTubeStudioClient:
                 dimensions="insightTrafficSourceType",
                 sort="-views",
             )
-            .execute()
         )
         traffic_records = format_analytics_report(traffic_res)
 
@@ -383,7 +480,7 @@ class YouTubeStudioClient:
         max_results: int = 25,
         page_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Lists videos uploaded to the channel with current statistics and privacy status."""
+        """List uploaded channel videos with current statistics and privacy status."""
         _, uploads_id = self._get_channel_info_cached()
 
         kwargs: Dict[str, Any] = {
@@ -428,7 +525,10 @@ class YouTubeStudioClient:
                 "video_id": vid_id,
                 "video_url": f"https://www.youtube.com/watch?v={vid_id}",
                 "title": snippet.get("title"),
-                "description": snippet.get("description", "")[:200] + ("..." if len(snippet.get("description", "")) > 200 else ""),
+                "description": (
+                    snippet.get("description", "")[:200]
+                    + ("..." if len(snippet.get("description", "")) > 200 else "")
+                ),
                 "published_at": snippet.get("publishedAt"),
                 "duration": st.get("duration"),
                 "views": st.get("views", 0),
@@ -445,7 +545,7 @@ class YouTubeStudioClient:
         }
 
     def get_video_details(self, video_ids: Union[List[str], str]) -> List[Dict[str, Any]]:
-        """Fetches full metadata, description, tags, and statistics for specified video IDs."""
+        """Fetch metadata and statistics for the specified YouTube video IDs."""
         if isinstance(video_ids, str):
             ids_list = [v.strip() for v in video_ids.split(",") if v.strip()]
         else:
@@ -498,11 +598,18 @@ class YouTubeStudioClient:
         max_results: int = 20,
         order: str = "relevance",
     ) -> Dict[str, Any]:
-        """Retrieves top comment threads and replies for a video or channel for sentiment/feedback analysis."""
+        """Retrieve top comment threads and replies for a video or channel."""
+        self._validate_max_results(max_results, field_name="max_results", maximum=100)
+        normalized_order = self._normalize_order(
+            order,
+            allowed={k: k for k in self.SUPPORTED_COMMENT_ORDERS},
+            field_name="order",
+        )
+
         kwargs: Dict[str, Any] = {
             "part": "snippet,replies",
-            "maxResults": min(max_results, 100),
-            "order": order,  # 'time' or 'relevance'
+            "maxResults": max_results,
+            "order": normalized_order,
         }
 
         if video_id:
@@ -510,7 +617,7 @@ class YouTubeStudioClient:
         else:
             kwargs["allThreadsRelatedToChannelId"], _ = self._get_channel_info_cached()
 
-        res = self.data_api.commentThreads().list(**kwargs).execute()
+        res = self._execute_with_retry(self.data_api.commentThreads().list(**kwargs))
         items = res.get("items", [])
 
         comments = []
