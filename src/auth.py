@@ -6,13 +6,11 @@ token persistence, and automatic token refreshing.
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import sys
 import webbrowser
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from dotenv import find_dotenv, load_dotenv
 from google.auth.transport.requests import Request
@@ -104,11 +102,11 @@ def load_credentials() -> Credentials:
         try:
             creds.refresh(Request())
             return creds
-        except Exception as e:
+        except Exception as exc:
             raise RuntimeError(
-                f"Failed to refresh YouTube OAuth token using .env credentials: {e}.\n"
+                f"Failed to refresh YouTube OAuth token using .env credentials: {exc}.\n"
                 f"Please re-run 'uv run run_auth.py' to re-authenticate."
-            ) from e
+            ) from exc
 
     # 2. Fallback to token.json if present
     if DEFAULT_TOKEN_FILE.exists():
@@ -121,7 +119,7 @@ def load_credentials() -> Credentials:
                 if creds.refresh_token:
                     save_refresh_token_to_env(creds.refresh_token)
             return creds
-        except Exception as e:
+        except Exception:
             pass
 
     # 3. Not configured yet
@@ -169,7 +167,7 @@ def authenticate_interactive(
     port: int = 8088,
     env_path: Optional[Path] = None,
 ) -> Credentials:
-    """Performs interactive OAuth 2.0 flow using credentials from .env (or client_secrets.json fallback).
+    """Run OAuth setup from .env credentials or client_secrets.json fallback.
 
     Saves the resulting refresh token directly into .env and token.json.
     """

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.formatters import (
     format_analytics_report,
     parse_iso8601_duration,
@@ -76,3 +78,31 @@ def test_parse_date_range():
     )
     assert start_custom == "2026-01-01"
     assert end_custom == "2026-01-31"
+
+
+def test_summarize_analytics_uses_api_ctr_when_available():
+    records = [
+        {"views": 200, "impressions": 10000, "impressionClickThroughRate": 1.0},
+        {"views": 300, "impressions": 15000, "impressionClickThroughRate": 2.0},
+    ]
+
+    summary = summarize_analytics(records)
+
+    assert summary["overall_ctr_percentage"] == 1.6
+
+
+def test_parse_date_range_rejects_unsupported_period():
+    with pytest.raises(ValueError, match="Unsupported time period"):
+        YouTubeStudioClient._parse_date_range(time_period="not-a-real-period")
+
+
+def test_get_analytics_by_dimension_rejects_invalid_dimension():
+    client = YouTubeStudioClient.__new__(YouTubeStudioClient)
+    with pytest.raises(ValueError, match="Unsupported dimension"):
+        YouTubeStudioClient.get_analytics_by_dimension(client, dimension="totally_invalid_dimension")
+
+
+def test_get_video_comments_rejects_invalid_order():
+    client = YouTubeStudioClient.__new__(YouTubeStudioClient)
+    with pytest.raises(ValueError, match="Unsupported order"):
+        YouTubeStudioClient.get_video_comments(client, video_id="abc123", order="bad-order")
